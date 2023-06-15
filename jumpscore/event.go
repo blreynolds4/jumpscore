@@ -23,19 +23,3 @@ func NewEvent(name string, day time.Time) Event {
 		Competitions: make([]Competition, 0),
 	}
 }
-
-func (e Event) GetName() string {
-	return e.Name
-}
-
-func (e Event) GetDate() time.Time {
-	return e.Date
-}
-
-func (e Event) GetCompetitions() []Competition {
-	// return a copy of the competition list
-	// comps := make([]Competition, len(e.Competitions))
-	// copy(comps, e.Competitions)
-
-	return e.Competitions
-}

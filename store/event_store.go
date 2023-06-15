@@ -8,51 +8,36 @@ import (
 	"io/ioutil"
 	"jumpscore/jumpscore"
 	"os"
+	"strings"
 	"unicode"
 )
 
-func CreateEvent(event jumpscore.Event) error {
-	eventFileName := getNameSlug(event.GetName())
-	if _, err := os.Stat(eventFileName); os.IsNotExist(err) {
-		// create the event directory
-		if err := os.Mkdir(eventFileName, os.ModePerm); err != nil {
-			return err
-		}
-
-		// create the event
-		data, err := json.MarshalIndent(event, "", "  ")
-		if err != nil {
-			return err
-		}
-
-		eventFullPath := fmt.Sprintf("%s%c%s", eventFileName, os.PathSeparator, eventFileName)
-		err = ioutil.WriteFile(eventFullPath, data, fs.FileMode(0660))
-		if err != nil {
-			return err
-		}
-
-		return nil
-	}
-
-	// don't overwrite an event, return an error
-	return fmt.Errorf("event %s already exists", event.GetName())
+type EventStore interface {
+	CreateEvent(event jumpscore.Event) error
+	GetEvent(name string) (jumpscore.Event, error)
+	UpdateEvent(event jumpscore.Event) error
+	DeleteEvent(event jumpscore.Event) error
+	GetEvents() ([]jumpscore.Event, error)
 }
 
-func UpdateEvent(event jumpscore.Event) error {
-	eventFileName := getNameSlug(event.GetName())
-	if _, err := os.Stat(eventFileName); os.IsNotExist(err) {
-		// not found, can't update
-		return err
+type fileEventStore struct {
+	Root string
+}
+
+func NewFileEventStore(root string) (EventStore, error) {
+	rootDir := strings.TrimSpace(root)
+	if len(rootDir) == 0 {
+		return nil, fmt.Errorf("event store rood directory is required")
 	}
 
-	// get updated data
-	data, err := json.MarshalIndent(event, "", "  ")
+	err := os.MkdirAll(rootDir, os.ModePerm)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	eventFullPath := fmt.Sprintf("%s%c%s", eventFileName, os.PathSeparator, eventFileName)
-	return ioutil.WriteFile(eventFullPath, data, fs.FileMode(0660))
+	return &fileEventStore{
+		Root: rootDir,
+	}, nil
 }
 
 func getNameSlug(name string) string {
@@ -67,10 +52,93 @@ func getNameSlug(name string) string {
 	return b.String()
 }
 
-func DeleteEvent(event jumpscore.Event) error {
+func (fec *fileEventStore) notFoundError(name string) error {
+	return fmt.Errorf("event not found: %s", name)
+}
+
+func (fes *fileEventStore) getEventDir(slug string) string {
+	return fmt.Sprintf("%s%c%s", fes.Root, os.PathSeparator, slug)
+}
+
+func (fes *fileEventStore) getEventPath(name string) string {
+	eventDir := fes.getEventDir(getNameSlug(name))
+	return fmt.Sprintf("%s%c%s", eventDir, os.PathSeparator, getNameSlug(name))
+}
+
+func (fes *fileEventStore) eventExists(name string) bool {
+	eventFullPath := fes.getEventPath(name)
+	if _, err := os.Stat(eventFullPath); os.IsNotExist(err) {
+		return false
+	}
+
+	return true
+}
+
+func (fes *fileEventStore) CreateEvent(event jumpscore.Event) error {
+	eventDir := fes.getEventDir(getNameSlug(event.Name))
+	if _, err := os.Stat(eventDir); os.IsNotExist(err) {
+		// create the event directory
+		if err := os.Mkdir(eventDir, os.ModePerm); err != nil {
+			return err
+		}
+
+		// create the event
+		data, err := json.MarshalIndent(event, "", "  ")
+		if err != nil {
+			return err
+		}
+
+		eventFullPath := fes.getEventPath(event.Name)
+		err = ioutil.WriteFile(eventFullPath, data, fs.FileMode(0660))
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	// don't overwrite an event, return an error
+	return fmt.Errorf("event %s already exists", event.Name)
+}
+
+func (fes *fileEventStore) GetEvent(name string) (jumpscore.Event, error) {
+	if !fes.eventExists(name) {
+		return jumpscore.Event{}, fes.notFoundError(name)
+	}
+
+	var result jumpscore.Event
+	eventPath := fes.getEventPath(name)
+	eventData, err := ioutil.ReadFile(eventPath)
+	if err != nil {
+		return jumpscore.Event{}, err
+	}
+
+	err = json.Unmarshal(eventData, &result)
+	if err != nil {
+		return jumpscore.Event{}, err
+	}
+
+	return result, nil
+}
+
+func (fes *fileEventStore) UpdateEvent(event jumpscore.Event) error {
+	if !fes.eventExists(event.Name) {
+		return fes.notFoundError(event.Name)
+	}
+
+	data, err := json.MarshalIndent(event, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	eventFullPath := fes.getEventPath(event.Name)
+	return ioutil.WriteFile(eventFullPath, data, fs.FileMode(0660))
+}
+
+func (fes *fileEventStore) DeleteEvent(event jumpscore.Event) error {
 	var err error
-	eventDirName := getNameSlug(event.GetName())
-	if _, err = os.Stat(eventDirName); os.IsNotExist(err) {
+	eventDir := fes.getEventDir(getNameSlug(event.Name))
+	if _, err = os.Stat(eventDir); os.IsNotExist(err) {
 		// not found
 		return nil
 	}
@@ -80,33 +148,31 @@ func DeleteEvent(event jumpscore.Event) error {
 		return err
 	}
 
-	return os.RemoveAll(eventDirName)
+	return os.RemoveAll(eventDir)
 }
 
-func GetEvents() ([]jumpscore.Event, error) {
+func (fes *fileEventStore) GetEvents() ([]jumpscore.Event, error) {
 	// create an events directory locally if it doesn't exist
 	// get an event list from dirs (event slugs)
 	// get the full name from event json in the dir
 	// event json immediate
 	result := make([]jumpscore.Event, 0, 5)
-	files, err := ioutil.ReadDir(".")
+	files, err := ioutil.ReadDir(fes.Root)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, file := range files {
-		fmt.Println("current file", file.Name())
+		// events are in directories, skip over files
 		if file.IsDir() {
-			fmt.Println(file.Name(), "is a dir")
 			// load the event json from the event dir
-			eventData, err := ioutil.ReadFile(fmt.Sprintf("%s%s%s", file.Name(), string(os.PathSeparator), file.Name()))
+			eventData, err := ioutil.ReadFile(fmt.Sprintf("%s%s%s", fes.getEventDir(file.Name()), string(os.PathSeparator), file.Name()))
 			if err != nil {
 				return nil, err
 			}
-			fmt.Println("event data", string(eventData))
+
 			var event jumpscore.Event
 			err = json.Unmarshal(eventData, &event)
-			fmt.Println("err", err)
 			if err != nil {
 				return nil, err
 			}
@@ -117,46 +183,3 @@ func GetEvents() ([]jumpscore.Event, error) {
 
 	return result, nil
 }
-
-// func NewJsonEventStore(dir string) (EventStore, error) {
-// 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-// 		if err := os.MkdirAll(dir, os.ModeDir); err != nil {
-// 			return nil, err
-// 		}
-// 	}
-
-// 	result := &jsonEventStore{
-// 		dataDir: dir,
-// 		Jumps:   make(map[string]jumpscore.SkiJump),
-// 	}
-
-// 	content, err := ioutil.ReadFile(storeFileName)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	err = json.Unmarshal(content, result)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	return result, nil
-// }
-
-// func CreateJump(sj jumpscore.SkiJump) error {
-// 	jes.Jumps[sj.JumpName] = sj
-
-// 	return jes.saveStore()
-// }
-
-// func GetJump(name string) (jumpscore.SkiJump, error) {
-// 	sj, found := jes.Jumps[name]
-// 	if !found {
-// 		return sj, errors.New("jump not found for name " + name)
-// 	}
-
-// 	return sj, nil
-// }
-
-// func DeleteJump(sj jumpscore.SkiJump) error {
-// }

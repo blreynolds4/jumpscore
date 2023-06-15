@@ -10,6 +10,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func getEventStore() store.EventStore {
+	store, err := store.NewFileEventStore("zEventStore")
+	if err != nil {
+		panic(err)
+	}
+
+	return store
+}
+
 // methods to handle rest requests
 func createEvent(c *gin.Context) {
 	fmt.Println("Handling get events")
@@ -22,7 +31,8 @@ func createEvent(c *gin.Context) {
 		})
 	}
 
-	err = store.CreateEvent(e)
+	eventStore := getEventStore()
+	err = eventStore.CreateEvent(e)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": err.Error(),
@@ -32,7 +42,17 @@ func createEvent(c *gin.Context) {
 }
 func getEvents(c *gin.Context) {
 	fmt.Println("Handling get events")
-	store.GetEvents()
+	eventStore := getEventStore()
+	events, err := eventStore.GetEvents()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": err.Error(),
+		})
+	}
+
+	// need a response object maybe to hold the array?
+	// don't like to return bare arrays
+	c.JSON(http.StatusOK, events)
 }
 
 func main() {
