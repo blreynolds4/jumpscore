@@ -6,6 +6,7 @@ import (
 	"jumpscore/store"
 	"net/http"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/contrib/static"
 	"github.com/gin-gonic/gin"
 )
@@ -57,10 +58,11 @@ func getEvents(c *gin.Context) {
 
 func main() {
 	router := gin.Default()
-	router.Use(static.Serve("/", static.LocalFile("./views", true)))
+	router.Use(static.Serve("/", static.LocalFile("./jumpscore_ui", true)))
 
 	// Setup route group for the API
 	api := router.Group("/api")
+	api.Use(cors.Default())
 	api.GET("/events", getEvents)
 	api.POST("/events", createEvent)
 

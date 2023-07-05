@@ -3,6 +3,7 @@ module jumpscore
 go 1.18
 
 require (
+	github.com/gin-contrib/cors v1.4.0
 	github.com/gin-gonic/contrib v0.0.0-20221130124618-7e01895a63f2
 	github.com/stretchr/testify v1.8.3
 )
